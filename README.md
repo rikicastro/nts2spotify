@@ -26,7 +26,7 @@ El Client ID no es un secreto (el flujo PKCE no usa Client Secret). Pégalo entr
 
 ## Coincidencias estrictas
 
-Una canción solo se añade si el título y el artista coinciden de verdad con lo que dice NTS (ignorando mayúsculas, acentos, paréntesis y sufijos tipo "Remastered"). Las que no coinciden no se añaden: te aparecen debajo con lo más parecido que ha encontrado Spotify (por si en NTS está mal escrito), un botón para añadirla tú si quieres, y enlaces para buscarla en YouTube, Bandcamp o Google.
+Una canción solo se añade si el título y el artista coinciden de verdad con lo que dice NTS (ignorando mayúsculas, acentos, paréntesis y sufijos tipo "Remastered"). Las que no coinciden no se añaden: te aparecen debajo con lo más parecido que ha encontrado Spotify (por si en NTS está mal escrito), un botón para añadirla tú si quieres, y enlaces para buscarla en YouTube, Bandcamp o Google. El botón "Añadir esa en su sitio" la inserta en la posición que le corresponde según el orden de NTS, no al final.
 
 ## Notas
 

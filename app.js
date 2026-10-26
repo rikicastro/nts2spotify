@@ -483,12 +483,20 @@ async function sp(method, path, token, { params, json, body, contentType } = {})
 async function findTrack(token, artist, title) {
   const a = clean(artist), t = clean(title);
   const firstArtist = a.split("&")[0].split(",")[0].trim();
-  const queries = [`track:"${t}" artist:"${a}"`, `${a} ${t}`, `${firstArtist} ${t}`];
+  // Las dos últimas buscan solo por título: así aparece la canción aunque el artista esté mal escrito en NTS.
+  const queries = [
+    [`track:"${t}" artist:"${a}"`, 5],
+    [`${a} ${t}`, 5],
+    [`${firstArtist} ${t}`, 5],
+    [`track:"${t}"`, 10],
+    [t, 10],
+  ];
   const nts = { artist, title };
   const seen = new Set();
   let best = null;
-  for (const q of queries) {
-    const data = await sp("GET", "/search", token, { params: { q, type: "track", limit: 5 } });
+  for (const [q, limit] of queries) {
+    if (!q.replace(/track:|artist:|["\s]/g, "")) continue;
+    const data = await sp("GET", "/search", token, { params: { q, type: "track", limit } });
     for (const item of data.tracks?.items || []) {
       if (seen.has(item.uri)) continue;
       seen.add(item.uri);
@@ -516,15 +524,16 @@ async function findTrack(token, artist, title) {
 // Paso 2: busca las canciones, crea la playlist y sube la portada elegida.
 async function createPlaylist(prep, token, st, onProgress) {
   const { ep, cleanUrl } = prep;
-  const uris = [], unmatched = [];
+  // `added` guarda qué posiciones del tracklist de NTS están ya en la playlist (para insertar después en su sitio).
+  const uris = [], added = [], unmatched = [];
   for (let i = 0; i < ep.tracks.length; i++) {
     const t = ep.tracks[i];
     onProgress(`Buscando en Spotify… ${i + 1}/${ep.tracks.length}`);
     const r = await findTrack(token, t.artist, t.title);
     if (r.status === "ok") {
-      if (!uris.includes(r.uri)) uris.push(r.uri);
+      if (!uris.includes(r.uri)) { uris.push(r.uri); added.push(i); }
     } else {
-      unmatched.push({ artist: t.artist, title: t.title, suggestion: r.suggestion || null });
+      unmatched.push({ index: i, artist: t.artist, title: t.title, suggestion: r.suggestion || null });
     }
   }
   if (!uris.length && !unmatched.some((u) => u.suggestion)) {
@@ -550,7 +559,7 @@ async function createPlaylist(prep, token, st, onProgress) {
   }
   return {
     id: pl.id, name: pl.name, url: pl.external_urls.spotify,
-    total: ep.tracks.length, matched: uris.length, unmatched, cover,
+    total: ep.tracks.length, matched: uris.length, added, unmatched, cover,
   };
 }
 
@@ -684,7 +693,8 @@ async function initUI() {
     return a;
   }
 
-  function renderUnmatched(list, playlistId) {
+  // placed = posiciones del tracklist de NTS que ya están en la playlist.
+  function renderUnmatched(list, playlistId, placed) {
     $("r-un").replaceChildren();
     $("r-un-box").classList.toggle("hidden", !list.length);
     $("r-un-title").textContent = `${list.length} sin añadir (no coinciden tal cual con lo que dice NTS)`;
@@ -705,19 +715,22 @@ async function initUI() {
         const add = document.createElement("button");
         add.type = "button";
         add.className = "mini";
-        add.textContent = "Añadir esa";
+        add.textContent = "Añadir esa en su sitio";
         add.onclick = async () => {
           add.disabled = true;
           add.textContent = "Añadiendo…";
           try {
             const tk = await getToken();
             if (!tk) { location.reload(); return; }
-            await sp("POST", `/playlists/${playlistId}/items`, tk, { json: { uris: [s.uri] } });
-            add.textContent = "Añadida ✓";
+            // Posición = cuántas canciones anteriores del tracklist ya están en la playlist.
+            const pos = [...placed].filter((j) => j < u.index).length;
+            await sp("POST", `/playlists/${playlistId}/items`, tk, { json: { uris: [s.uri], position: pos } });
+            placed.add(u.index);
+            add.textContent = `Añadida en la posición ${pos + 1} ✓`;
             reloadEmbed();
           } catch (err) {
             add.disabled = false;
-            add.textContent = "Añadir esa";
+            add.textContent = "Añadir esa en su sitio";
             setStatus(err.message, true);
           }
         };
@@ -781,7 +794,7 @@ async function initUI() {
           : `Portada no subida: ${data.cover.reason}. La playlist está creada igualmente.`;
       $("r-link").href = data.url;
       $("r-embed").src = `https://open.spotify.com/embed/playlist/${data.id}?utm_source=generator`;
-      renderUnmatched(data.unmatched, data.id);
+      renderUnmatched(data.unmatched, data.id, new Set(data.added));
       $("result").classList.remove("hidden");
     } catch (err) {
       let msg = err.message;
