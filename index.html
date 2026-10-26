@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NTS → Spotify</title>
+<style>
+  :root { --bg:#0b0b0b; --fg:#f4f1ea; --muted:#8a8a85; --line:#2a2a28; --accent:#1ed760; --err:#ff5a4d; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--fg); }
+  body { font-family:"Helvetica Neue",Helvetica,Arial,sans-serif; min-height:100vh; display:flex; justify-content:center; padding:56px 20px; }
+  main { width:100%; max-width:620px; }
+  header { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:56px; }
+  .brand { font-weight:800; letter-spacing:.14em; font-size:13px; text-transform:uppercase; }
+  .brand span { color:var(--accent); }
+  #auth { font-size:13px; color:var(--muted); }
+  a { color:var(--fg); text-underline-offset:3px; }
+  h1 { font-size:clamp(38px,9vw,64px); line-height:.95; letter-spacing:-.03em; text-transform:uppercase; margin:0 0 18px; font-weight:800; }
+  .sub { color:var(--muted); margin:0 0 40px; font-size:16px; line-height:1.5; }
+  form { display:flex; flex-direction:column; gap:12px; }
+  label { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); }
+  input[type=url], input[type=text] { width:100%; background:transparent; border:0; border-bottom:2px solid var(--fg); color:var(--fg); font-size:18px; padding:12px 0; outline:none; border-radius:0; }
+  input::placeholder { color:#55554f; }
+  input:focus { border-bottom-color:var(--accent); }
+  button, .btn { appearance:none; border:0; background:var(--fg); color:#000; font-weight:800; letter-spacing:.1em; text-transform:uppercase; font-size:14px; padding:16px 22px; cursor:pointer; text-decoration:none; display:inline-block; text-align:center; margin-top:14px; }
+  button:hover, .btn:hover { background:var(--accent); }
+  button:disabled { opacity:.5; cursor:wait; background:var(--fg); }
+  .hidden { display:none !important; }
+  #setup { border:1px solid var(--line); padding:28px; }
+  #setup ol { margin:0 0 22px; padding-left:20px; color:var(--muted); line-height:1.7; font-size:15px; }
+  #setup li strong { color:var(--fg); font-weight:600; }
+  .uri { display:flex; gap:10px; align-items:center; margin:8px 0 0; }
+  code { background:#161614; padding:4px 8px; font-size:13px; word-break:break-all; color:var(--fg); }
+  .uri button { margin:0; padding:6px 10px; font-size:11px; }
+  #status { margin-top:28px; min-height:24px; font-size:15px; color:var(--muted); }
+  #status.err { color:var(--err); }
+  #result { margin-top:36px; border-top:1px solid var(--line); padding-top:28px; }
+  #result h2 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
+  #result .count { color:var(--muted); font-size:14px; margin-bottom:8px; }
+  details { margin-top:24px; color:var(--muted); font-size:14px; }
+  details summary { cursor:pointer; }
+  details ul { padding-left:18px; line-height:1.7; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="brand">NTS <span>→</span> Spotify</div>
+    <div id="auth"></div>
+  </header>
+
+  <h1>De la sesión<br>a tu playlist</h1>
+  <p class="sub">Pega el enlace de un episodio de NTS y te creo una playlist privada en Spotify con su tracklist.</p>
+
+  <section id="setup" class="hidden">
+    <ol>
+      <li>Crea una app en <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">el dashboard de Spotify</a>.</li>
+      <li>En <strong>Redirect URIs</strong> añade exactamente esta dirección:
+        <div class="uri"><code id="redirect-uri"></code><button type="button" id="copy-uri">Copiar</button></div>
+      </li>
+      <li>Pega aquí su <strong>Client ID</strong> (solo se guarda en tu navegador):</li>
+    </ol>
+    <form id="setup-form">
+      <label for="client-id">Client ID</label>
+      <input id="client-id" type="text" required autocomplete="off" spellcheck="false" placeholder="32 caracteres">
+      <button type="submit">Conectar Spotify</button>
+    </form>
+  </section>
+
+  <form id="form" class="hidden">
+    <label for="url">Enlace del episodio</label>
+    <input id="url" type="url" required placeholder="https://www.nts.live/shows/…/episodes/…">
+    <button id="go" type="submit">Crear playlist</button>
+  </form>
+
+  <div id="status"></div>
+
+  <section id="result" class="hidden">
+    <h2 id="r-name"></h2>
+    <div class="count" id="r-count"></div>
+    <a id="r-link" class="btn" href="#" target="_blank" rel="noopener">Abrir en Spotify</a>
+    <details id="r-missing-box" class="hidden">
+      <summary id="r-missing-title"></summary>
+      <ul id="r-missing"></ul>
+    </details>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

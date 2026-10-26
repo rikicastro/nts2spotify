@@ -1,0 +1,21 @@
+# NTS → Spotify
+
+Webapp estática: pegas el enlace de un episodio de NTS y crea una playlist privada en tu Spotify con su tracklist. Corre entera en el navegador (login con Spotify PKCE), sin servidor ni secretos, así que se puede publicar gratis en GitHub Pages.
+
+## Publicar en GitHub Pages
+
+1. Crea un repositorio nuevo en GitHub (por ejemplo `nts2spotify`) y sube `index.html`, `app.js` y `.nojekyll`.
+2. En el repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch**, rama `main`, carpeta `/ (root)` → **Save**.
+3. En un minuto tendrás la web en `https://TU-USUARIO.github.io/nts2spotify/`.
+
+## Configurar Spotify (una sola vez)
+
+1. Entra en https://developer.spotify.com/dashboard y crea una app (marca *Web API*).
+2. Abre tu web publicada: te muestra la **Redirect URI** exacta. Cópiala en *Settings → Redirect URIs* de la app de Spotify y guarda.
+3. Pega el **Client ID** en la web y pulsa *Conectar Spotify*. Se guarda solo en tu navegador.
+
+## Notas
+
+- Desde febrero de 2026, las apps de Spotify en modo desarrollo exigen que el dueño de la app tenga **Premium** y limitan los usuarios (5 en apps nuevas). Para uso personal basta.
+- NTS no está pensado para consumirse desde otras webs: la app intenta la API directa y, si el navegador la bloquea (CORS), usa proxies públicos. Si algún día falla la lectura, revisa `fetchJSON` en `app.js`.
+- Los temas poco comerciales (white labels, bootlegs, edits) suelen no estar en Spotify, así que algunos faltarán. La web te los lista.
