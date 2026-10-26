@@ -37,6 +37,7 @@
   #result { margin-top:36px; border-top:1px solid var(--line); padding-top:28px; }
   #result h2 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
   #result .count { color:var(--muted); font-size:14px; margin-bottom:8px; }
+  #r-embed { width:100%; border:0; border-radius:12px; margin-top:28px; background:#121212; }
   details { margin-top:24px; color:var(--muted); font-size:14px; }
   details summary { cursor:pointer; }
   details ul { padding-left:18px; line-height:1.7; }
@@ -86,6 +87,8 @@
       <summary id="r-missing-title"></summary>
       <ul id="r-missing"></ul>
     </details>
+    <iframe id="r-embed" title="Playlist de Spotify" height="352" loading="lazy"
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>
   </section>
 </main>
 <script src="app.js"></script>

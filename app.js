@@ -74,14 +74,25 @@ function buildDescription(desc, url) {
   return d + link;
 }
 
+// 800 px sobra para una portada de 640; si no existe, probamos tamaños mayores y luego menores.
 const IMG_KEYS = [
-  "picture_large", "background_large", "picture_medium_large",
-  "background_medium_large", "picture_medium", "background_medium",
+  "picture_medium_large", "background_medium_large", "picture_large", "background_large",
+  "picture_medium", "background_medium",
 ];
 function pickImage(data) {
   const m = data?.media || {};
-  for (const k of IMG_KEYS) if (m[k]) return m[k];
-  return null;
+  for (const k of IMG_KEYS) if (typeof m[k] === "string" && m[k]) return m[k];
+  // Plan B: cualquier URL de imagen de NTS dentro del JSON del episodio.
+  const found = JSON.stringify(data || {}).match(/https?:\/\/media\d*\.ntslive\.co\.uk\/[^"'\s\\]+\.(?:jpe?g|png|webp)/i);
+  return found ? found[0] : null;
+}
+
+// Plan C: la imagen que NTS pone en la propia página del episodio (og:image).
+function ogImage(html) {
+  const s = String(html);
+  const m = s.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i)
+    || s.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i);
+  return m ? m[1].replace(/&amp;/g, "&") : null;
 }
 
 function redirectUri() {
@@ -205,8 +216,27 @@ async function fetchJSON(url) {
   throw new Error("No he podido leer NTS desde el navegador. Prueba otra vez en un rato.");
 }
 
-async function fetchBlob(url) {
+async function fetchText(url) {
   for (const wrap of PROXIES) {
+    try {
+      const res = await fetch(wrap(url));
+      if (res.ok) return await res.text();
+    } catch { /* siguiente intento */ }
+  }
+  throw new Error("no se pudo leer la página");
+}
+
+// Para imágenes añadimos wsrv.nl, un proxy de imágenes con CORS abierto.
+const BLOB_PROXIES = [
+  (u) => u,
+  (u) => "https://wsrv.nl/?output=jpg&w=1000&url=" + encodeURIComponent(u),
+  (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+  (u) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
+  (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+];
+
+async function fetchBlob(url) {
+  for (const wrap of BLOB_PROXIES) {
     try {
       const res = await fetch(wrap(url));
       if (!res.ok) continue;
@@ -275,16 +305,25 @@ async function coverToJpegBase64(blob) {
   return null;
 }
 
+// Devuelve { ok: true } o { ok: false, reason } para poder decirle al usuario qué ha fallado.
 async function uploadCover(token, playlistId, imageUrl) {
+  console.log("[NTS→Spotify] imagen de portada:", imageUrl);
+  const blob = await fetchBlob(imageUrl);
+  if (!blob) return { ok: false, reason: "no he podido descargar la imagen de NTS" };
+  let b64 = null;
+  try { b64 = await coverToJpegBase64(blob); } catch (e) { console.error(e); }
+  if (!b64) return { ok: false, reason: "no he podido procesar la imagen" };
   try {
-    const blob = await fetchBlob(imageUrl);
-    if (!blob) return false;
-    const b64 = await coverToJpegBase64(blob);
-    if (!b64) return false;
     await sp("PUT", `/playlists/${playlistId}/images`, token, { body: b64, contentType: "image/jpeg" });
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (e) {
+    console.error(e);
+    return {
+      ok: false,
+      reason: e.status
+        ? e.message
+        : `el navegador ha bloqueado la subida a Spotify (${e.message})`,
+    };
   }
 }
 
@@ -356,13 +395,19 @@ async function convert(url, token, onProgress) {
     await sp("POST", `/playlists/${pl.id}/items`, token, { json: { uris: uris.slice(i, i + 100) } });
   }
 
-  let cover = null; // null = el episodio no tiene imagen
-  if (ep.image) {
+  let image = ep.image;
+  if (!image) {
+    try { image = ogImage(await fetchText(cleanUrl)); } catch { /* sin imagen */ }
+  }
+  let cover;
+  if (image) {
     onProgress("Subiendo la portada…");
-    cover = await uploadCover(token, pl.id, ep.image);
+    cover = await uploadCover(token, pl.id, image);
+  } else {
+    cover = { ok: false, reason: "no he encontrado ninguna imagen del episodio en NTS" };
   }
   return {
-    name: pl.name, url: pl.external_urls.spotify,
+    id: pl.id, name: pl.name, url: pl.external_urls.spotify,
     total: ep.tracks.length, matched: uris.length, missing, cover,
   };
 }
@@ -420,6 +465,7 @@ async function initUI() {
     const btn = $("go");
     btn.disabled = true;
     $("result").classList.add("hidden");
+    $("r-embed").removeAttribute("src");
     try {
       const tk = await getToken();
       if (!tk) { location.reload(); return; }
@@ -427,11 +473,11 @@ async function initUI() {
       setStatus("");
       $("r-name").textContent = data.name;
       $("r-count").textContent = `${data.matched} de ${data.total} canciones encontradas en Spotify`;
-      $("r-note").textContent =
-        data.cover === false ? "No he podido subir la portada (la playlist está creada igualmente)."
-        : data.cover === null ? "Este episodio no tiene imagen en NTS."
-        : "";
+      $("r-note").textContent = data.cover.ok
+        ? "Portada subida (Spotify puede tardar un poco en mostrarla)."
+        : `Portada no subida: ${data.cover.reason}. La playlist está creada igualmente.`;
       $("r-link").href = data.url;
+      $("r-embed").src = `https://open.spotify.com/embed/playlist/${data.id}?utm_source=generator`;
       const box = $("r-missing-box");
       if (data.missing.length) {
         $("r-missing-title").textContent = `${data.missing.length} sin encontrar`;
@@ -459,5 +505,5 @@ async function initUI() {
 
 if (typeof document !== "undefined") initUI();
 if (typeof module !== "undefined") {
-  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage };
+  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage, ogImage };
 }
