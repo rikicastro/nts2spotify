@@ -74,10 +74,11 @@ function buildDescription(desc, url) {
   return d + link;
 }
 
-// 800 px sobra para una portada de 640; si no existe, probamos tamaños mayores y luego menores.
+// NTS tiene dos imágenes por episodio: "picture_*" (la pequeña, de primer plano) y "background_*"
+// (la grande de fondo, con más contenido). Preferimos la de fondo, de mayor a menor tamaño.
 const IMG_KEYS = [
-  "picture_medium_large", "background_medium_large", "picture_large", "background_large",
-  "picture_medium", "background_medium",
+  "background_large", "background_medium_large", "background_medium",
+  "picture_large", "picture_medium_large", "picture_medium",
 ];
 function pickImage(data) {
   const m = data?.media || {};
