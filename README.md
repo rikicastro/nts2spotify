@@ -22,7 +22,7 @@ El Client ID no es un secreto (el flujo PKCE no usa Client Secret). Pégalo entr
 
 - **Título:** `NTS: nombre del episodio · fecha de emisión`.
 - **Descripción:** la del episodio (recortada a 300 caracteres) más el enlace de NTS.
-- **Portada:** la imagen del episodio, recortada a cuadrado y comprimida como JPEG. Necesita el permiso `ugc-image-upload`; si ya habías conectado antes, te pedirá reconectar una vez.
+- **Portada:** descarga la imagen completa de NTS (la grande de fondo) y te deja elegir cómo quieres que quede: **entera con fondo difuminado**, **recortada a 1:1 eligiendo tú el encuadre** (arrastras la imagen y ajustas el zoom) o **sin portada**. También puedes usar otra imagen tuya. Se sube como JPEG de 640×640. Necesita el permiso `ugc-image-upload`; si ya habías conectado antes, te pedirá reconectar una vez.
 
 ## Notas
 

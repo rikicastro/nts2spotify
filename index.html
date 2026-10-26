@@ -18,7 +18,7 @@
   h1 { font-size:clamp(38px,9vw,64px); line-height:.95; letter-spacing:-.03em; text-transform:uppercase; margin:0 0 18px; font-weight:800; }
   .sub { color:var(--muted); margin:0 0 40px; font-size:16px; line-height:1.5; }
   form { display:flex; flex-direction:column; gap:12px; }
-  label { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); }
+  label, .lbl { font-size:12px; text-transform:uppercase; letter-spacing:.12em; color:var(--muted); }
   input[type=url], input[type=text] { width:100%; background:transparent; border:0; border-bottom:2px solid var(--fg); color:var(--fg); font-size:18px; padding:12px 0; outline:none; border-radius:0; }
   input::placeholder { color:#55554f; }
   input:focus { border-bottom-color:var(--accent); }
@@ -34,9 +34,28 @@
   .uri button { margin:0; padding:6px 10px; font-size:11px; }
   #status { margin-top:28px; min-height:24px; font-size:15px; color:var(--muted); }
   #status.err { color:var(--err); }
+
+  #editor { margin-top:36px; border-top:1px solid var(--line); padding-top:28px; }
+  #editor h2 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
+  .count { color:var(--muted); font-size:14px; margin-bottom:8px; }
+  .seg { display:flex; margin:10px 0 0; }
+  .seg button { flex:1; margin:0; background:transparent; color:var(--fg); border:1px solid var(--line); padding:12px 6px; font-size:12px; letter-spacing:.06em; }
+  .seg button + button { border-left:0; }
+  .seg button:hover { background:#1a1a18; }
+  .seg button.on { background:var(--fg); color:#000; }
+  #cover { display:block; width:100%; max-width:360px; aspect-ratio:1/1; margin-top:18px; background:#161614; border-radius:4px; touch-action:none; }
+  #cover.grab { cursor:grab; }
+  #cover.grab:active { cursor:grabbing; }
+  #crop-controls { max-width:360px; margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+  #crop-controls input[type=range] { width:100%; accent-color:var(--accent); }
+  .hint { color:var(--muted); font-size:13px; }
+  #cover-msg { margin-top:10px; font-size:14px; color:var(--muted); }
+  .link { background:none; color:var(--fg); padding:0; margin:14px 0 0; text-decoration:underline; text-underline-offset:3px; font-size:13px; letter-spacing:.04em; text-transform:none; font-weight:500; cursor:pointer; align-self:flex-start; }
+  .link:hover { background:none; color:var(--accent); }
+  #create { margin-top:22px; width:100%; }
+
   #result { margin-top:36px; border-top:1px solid var(--line); padding-top:28px; }
   #result h2 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
-  #result .count { color:var(--muted); font-size:14px; margin-bottom:8px; }
   #r-embed { width:100%; border:0; border-radius:12px; margin-top:28px; background:#121212; }
   details { margin-top:24px; color:var(--muted); font-size:14px; }
   details summary { cursor:pointer; }
@@ -51,7 +70,7 @@
   </header>
 
   <h1>De la sesión<br>a tu playlist</h1>
-  <p class="sub">Pega el enlace de un episodio de NTS y te creo una playlist privada en Spotify con su tracklist.</p>
+  <p class="sub">Pega el enlace de un episodio de NTS, elige cómo quieres la portada y te creo una playlist privada en Spotify con su tracklist.</p>
 
   <section id="setup" class="hidden">
     <ol id="setup-steps">
@@ -73,10 +92,36 @@
   <form id="form" class="hidden">
     <label for="url">Enlace del episodio</label>
     <input id="url" type="url" required placeholder="https://www.nts.live/shows/…/episodes/…">
-    <button id="go" type="submit">Crear playlist</button>
+    <button id="go" type="submit">Cargar episodio</button>
   </form>
 
   <div id="status"></div>
+
+  <section id="editor" class="hidden">
+    <h2 id="e-title"></h2>
+    <div class="count" id="e-count"></div>
+
+    <div class="lbl" style="margin-top:22px">Portada</div>
+    <div class="seg" id="seg">
+      <button type="button" data-mode="blur">Entera · fondo difuminado</button>
+      <button type="button" data-mode="crop">Recortar</button>
+      <button type="button" data-mode="none">Sin portada</button>
+    </div>
+
+    <div id="cover-wrap">
+      <canvas id="cover" width="640" height="640"></canvas>
+      <div id="crop-controls" class="hidden">
+        <span class="hint">Arrastra la imagen para elegir el encuadre.</span>
+        <input id="zoom" type="range" min="1" max="3" step="0.01" value="1" aria-label="Zoom">
+      </div>
+    </div>
+    <div id="cover-msg"></div>
+
+    <button type="button" class="link" id="pick-img">Usar otra imagen…</button>
+    <input id="own-img" type="file" accept="image/*" hidden>
+
+    <button id="create" type="button">Crear playlist</button>
+  </section>
 
   <section id="result" class="hidden">
     <h2 id="r-name"></h2>

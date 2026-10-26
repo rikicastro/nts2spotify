@@ -112,6 +112,7 @@ function randomString(len = 64) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 
 // ---------- Spotify auth (PKCE) ----------
 async function login(clientId) {
@@ -230,7 +231,7 @@ async function fetchText(url) {
 // Para imágenes añadimos wsrv.nl, un proxy de imágenes con CORS abierto.
 const BLOB_PROXIES = [
   (u) => u,
-  (u) => "https://wsrv.nl/?output=jpg&w=1000&url=" + encodeURIComponent(u),
+  (u) => "https://wsrv.nl/?output=jpg&w=1600&url=" + encodeURIComponent(u),
   (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
   (u) => "https://api.codetabs.com/v1/proxy?quest=" + encodeURIComponent(u),
   (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
@@ -266,31 +267,79 @@ async function fetchNtsEpisode(show, episode) {
   };
 }
 
+// Paso 1: lee el episodio y descarga la imagen completa (sin tocarla).
+async function prepare(url, onProgress) {
+  const { show, episode } = parseNtsUrl(url);
+  const cleanUrl = `https://www.nts.live/shows/${show}/episodes/${episode}`;
+  onProgress("Leyendo el episodio de NTS…");
+  const ep = await fetchNtsEpisode(show, episode);
+
+  let image = ep.image;
+  if (!image) {
+    try { image = ogImage(await fetchText(cleanUrl)); } catch { /* sin imagen */ }
+  }
+  let bmp = null, imageError = "";
+  if (image) {
+    onProgress("Descargando la imagen…");
+    console.log("[NTS→Spotify] imagen:", image);
+    const blob = await fetchBlob(image);
+    if (blob) {
+      try { bmp = await createImageBitmap(blob); } catch { imageError = "no he podido leer la imagen descargada"; }
+    } else {
+      imageError = "no he podido descargar la imagen de NTS";
+    }
+  } else {
+    imageError = "NTS no devuelve ninguna imagen para este episodio";
+  }
+  return { ep, cleanUrl, title: buildTitle(ep.name, ep.broadcast), bmp, imageError };
+}
+
 // ---------- Portada ----------
-// Spotify exige JPEG en base64 de como mucho 256 KB.
-async function coverToJpegBase64(blob) {
-  const bmp = await createImageBitmap(blob);
-  const size = 640;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = size;
+// st = { mode: "blur" | "crop" | "none", zoom: 1..3, cx, cy: centro del recorte (0..1) }
+function clampCrop(st, bmp) {
+  const side = Math.min(bmp.width, bmp.height) / st.zoom;
+  const hx = side / 2 / bmp.width, hy = side / 2 / bmp.height;
+  st.cx = clamp(st.cx, hx, 1 - hx);
+  st.cy = clamp(st.cy, hy, 1 - hy);
+}
+
+// Dibuja la portada tal y como se subirá. Sirve para la vista previa y para exportar.
+function renderCover(canvas, bmp, st) {
+  const size = canvas.width;
   const ctx = canvas.getContext("2d");
   ctx.imageSmoothingQuality = "high";
+  ctx.fillStyle = "#161614";
+  ctx.fillRect(0, 0, size, size);
+  if (!bmp) return;
 
-  // Fondo: la misma imagen difuminada (reducir y ampliar funciona en todos los navegadores, también iOS).
-  const side = Math.min(bmp.width, bmp.height);
+  if (st.mode === "crop") {
+    clampCrop(st, bmp);
+    const side = Math.min(bmp.width, bmp.height) / st.zoom;
+    const sx = st.cx * bmp.width - side / 2;
+    const sy = st.cy * bmp.height - side / 2;
+    ctx.drawImage(bmp, sx, sy, side, side, 0, 0, size, size);
+    return;
+  }
+
+  // Difuminado: la imagen entera centrada sobre una versión borrosa de sí misma.
+  // (reducir y ampliar funciona en todos los navegadores, también iOS)
+  const s = Math.min(bmp.width, bmp.height);
   const tiny = document.createElement("canvas");
   tiny.width = tiny.height = 24;
-  tiny.getContext("2d").drawImage(
-    bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 24, 24,
-  );
+  tiny.getContext("2d").drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, 24, 24);
   ctx.drawImage(tiny, 0, 0, size, size);
   ctx.fillStyle = "rgba(0,0,0,0.35)";
   ctx.fillRect(0, 0, size, size);
-
-  // Imagen completa, sin recortar nada, centrada sobre el fondo.
-  const scale = Math.min(size / bmp.width, size / bmp.height);
-  const w = bmp.width * scale, h = bmp.height * scale;
+  const k = Math.min(size / bmp.width, size / bmp.height);
+  const w = bmp.width * k, h = bmp.height * k;
   ctx.drawImage(bmp, (size - w) / 2, (size - h) / 2, w, h);
+}
+
+// Spotify exige JPEG en base64 de como mucho 256 KB.
+async function exportCover(bmp, st) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 640;
+  renderCover(canvas, bmp, st);
   for (const q of [0.9, 0.8, 0.7, 0.55, 0.4, 0.3]) {
     const out = await new Promise((r) => canvas.toBlob(r, "image/jpeg", q));
     if (out && out.size <= 180 * 1024) {
@@ -307,12 +356,9 @@ async function coverToJpegBase64(blob) {
 }
 
 // Devuelve { ok: true } o { ok: false, reason } para poder decirle al usuario qué ha fallado.
-async function uploadCover(token, playlistId, imageUrl) {
-  console.log("[NTS→Spotify] imagen de portada:", imageUrl);
-  const blob = await fetchBlob(imageUrl);
-  if (!blob) return { ok: false, reason: "no he podido descargar la imagen de NTS" };
+async function uploadCover(token, playlistId, bmp, st) {
   let b64 = null;
-  try { b64 = await coverToJpegBase64(blob); } catch (e) { console.error(e); }
+  try { b64 = await exportCover(bmp, st); } catch (e) { console.error(e); }
   if (!b64) return { ok: false, reason: "no he podido procesar la imagen" };
   try {
     await sp("PUT", `/playlists/${playlistId}/images`, token, { body: b64, contentType: "image/jpeg" });
@@ -368,12 +414,9 @@ async function findTrack(token, artist, title) {
   return null;
 }
 
-async function convert(url, token, onProgress) {
-  const { show, episode } = parseNtsUrl(url);
-  const cleanUrl = `https://www.nts.live/shows/${show}/episodes/${episode}`;
-  onProgress("Leyendo el episodio de NTS…");
-  const ep = await fetchNtsEpisode(show, episode);
-
+// Paso 2: busca las canciones, crea la playlist y sube la portada elegida.
+async function createPlaylist(prep, token, st, onProgress) {
+  const { ep, cleanUrl } = prep;
   const uris = [], missing = [];
   for (let i = 0; i < ep.tracks.length; i++) {
     const t = ep.tracks[i];
@@ -386,26 +429,20 @@ async function convert(url, token, onProgress) {
 
   onProgress("Creando la playlist…");
   const pl = await sp("POST", "/me/playlists", token, {
-    json: {
-      name: buildTitle(ep.name, ep.broadcast),
-      description: buildDescription(ep.description, cleanUrl),
-      public: false,
-    },
+    json: { name: prep.title, description: buildDescription(ep.description, cleanUrl), public: false },
   });
   for (let i = 0; i < uris.length; i += 100) {
     await sp("POST", `/playlists/${pl.id}/items`, token, { json: { uris: uris.slice(i, i + 100) } });
   }
 
-  let image = ep.image;
-  if (!image) {
-    try { image = ogImage(await fetchText(cleanUrl)); } catch { /* sin imagen */ }
-  }
   let cover;
-  if (image) {
-    onProgress("Subiendo la portada…");
-    cover = await uploadCover(token, pl.id, image);
+  if (st.mode === "none") {
+    cover = { skipped: true };
+  } else if (!prep.bmp) {
+    cover = { ok: false, reason: prep.imageError || "no hay imagen" };
   } else {
-    cover = { ok: false, reason: "no he encontrado ninguna imagen del episodio en NTS" };
+    onProgress("Subiendo la portada…");
+    cover = await uploadCover(token, pl.id, prep.bmp, st);
   }
   return {
     id: pl.id, name: pl.name, url: pl.external_urls.spotify,
@@ -461,22 +498,110 @@ async function initUI() {
     if (id) login(id);
   });
 
+  // ----- editor de portada -----
+  const canvas = $("cover");
+  const st = { mode: "blur", zoom: 1, cx: 0.5, cy: 0.5 };
+  let cur = null; // episodio preparado
+
+  const draw = () => renderCover(canvas, cur?.bmp || null, st);
+
+  function setMode(mode) {
+    st.mode = mode;
+    document.querySelectorAll("#seg button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+    $("crop-controls").classList.toggle("hidden", mode !== "crop" || !cur?.bmp);
+    $("cover-wrap").classList.toggle("hidden", mode === "none" || !cur?.bmp);
+    canvas.classList.toggle("grab", mode === "crop");
+    draw();
+  }
+
+  function setImage(bmp, error = "") {
+    cur.bmp = bmp;
+    cur.imageError = error;
+    st.zoom = 1; st.cx = 0.5; st.cy = 0.5;
+    $("zoom").value = 1;
+    $("cover-msg").textContent = bmp ? "" : `Sin imagen: ${error}. Puedes elegir otra o seguir sin portada.`;
+    // Casi cuadrada: recortar apenas pierde nada. Apaisada o vertical: mejor entera con fondo difuminado.
+    const nearSquare = bmp && Math.abs(bmp.width / bmp.height - 1) < 0.05;
+    setMode(nearSquare ? "crop" : "blur");
+  }
+
+  document.querySelectorAll("#seg button").forEach((b) => {
+    b.addEventListener("click", () => setMode(b.dataset.mode));
+  });
+
+  $("zoom").addEventListener("input", () => {
+    st.zoom = Number($("zoom").value);
+    draw();
+  });
+
+  let drag = null;
+  canvas.addEventListener("pointerdown", (e) => {
+    if (st.mode !== "crop" || !cur?.bmp) return;
+    drag = { x: e.clientX, y: e.clientY };
+    canvas.setPointerCapture(e.pointerId);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const bmp = cur.bmp;
+    const k = (Math.min(bmp.width, bmp.height) / st.zoom) / canvas.getBoundingClientRect().width; // px de origen por px de pantalla
+    st.cx -= ((e.clientX - drag.x) * k) / bmp.width;
+    st.cy -= ((e.clientY - drag.y) * k) / bmp.height;
+    drag = { x: e.clientX, y: e.clientY };
+    draw();
+  });
+  const endDrag = () => { drag = null; };
+  canvas.addEventListener("pointerup", endDrag);
+  canvas.addEventListener("pointercancel", endDrag);
+
+  $("pick-img").addEventListener("click", () => $("own-img").click());
+  $("own-img").addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !cur) return;
+    try { setImage(await createImageBitmap(file)); }
+    catch { $("cover-msg").textContent = "No he podido leer ese archivo como imagen."; }
+    e.target.value = "";
+  });
+
+  // ----- paso 1: cargar episodio -----
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const btn = $("go");
     btn.disabled = true;
     $("result").classList.add("hidden");
+    $("editor").classList.add("hidden");
     $("r-embed").removeAttribute("src");
+    try {
+      cur = await prepare($("url").value, (m) => setStatus(m));
+      setStatus("");
+      $("e-title").textContent = cur.title;
+      $("e-count").textContent = `${cur.ep.tracks.length} temas en el tracklist de NTS`;
+      setImage(cur.bmp, cur.imageError);
+      $("editor").classList.remove("hidden");
+    } catch (err) {
+      setStatus(err.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  // ----- paso 2: crear playlist -----
+  $("create").addEventListener("click", async () => {
+    if (!cur) return;
+    const btn = $("create");
+    btn.disabled = true;
     try {
       const tk = await getToken();
       if (!tk) { location.reload(); return; }
-      const data = await convert($("url").value, tk, (m) => setStatus(m));
+      const data = await createPlaylist(cur, tk, st, (m) => setStatus(m));
       setStatus("");
+      $("editor").classList.add("hidden");
       $("r-name").textContent = data.name;
       $("r-count").textContent = `${data.matched} de ${data.total} canciones encontradas en Spotify`;
-      $("r-note").textContent = data.cover.ok
-        ? "Portada subida (Spotify puede tardar un poco en mostrarla)."
-        : `Portada no subida: ${data.cover.reason}. La playlist está creada igualmente.`;
+      $("r-note").textContent = data.cover.skipped
+        ? "Playlist creada sin portada."
+        : data.cover.ok
+          ? "Portada subida (Spotify puede tardar un poco en mostrarla)."
+          : `Portada no subida: ${data.cover.reason}. La playlist está creada igualmente.`;
       $("r-link").href = data.url;
       $("r-embed").src = `https://open.spotify.com/embed/playlist/${data.id}?utm_source=generator`;
       const box = $("r-missing-box");
@@ -506,5 +631,5 @@ async function initUI() {
 
 if (typeof document !== "undefined") initUI();
 if (typeof module !== "undefined") {
-  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage, ogImage };
+  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage, ogImage, clampCrop };
 }
