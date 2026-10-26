@@ -57,9 +57,13 @@
   #result { margin-top:36px; border-top:1px solid var(--line); padding-top:28px; }
   #result h2 { margin:0 0 6px; font-size:22px; letter-spacing:-.01em; }
   #r-embed { width:100%; border:0; border-radius:12px; margin-top:28px; background:#121212; }
-  details { margin-top:24px; color:var(--muted); font-size:14px; }
-  details summary { cursor:pointer; }
-  details ul { padding-left:18px; line-height:1.7; }
+  .un { border:1px solid var(--line); padding:14px 16px; margin-top:12px; }
+  .un-title { font-weight:600; font-size:15px; }
+  .un .hint { margin-top:4px; line-height:1.45; }
+  .un-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .mini { margin:0; padding:7px 10px; font-size:11px; letter-spacing:.06em; background:transparent; color:var(--fg); border:1px solid #444; text-transform:uppercase; font-weight:700; text-decoration:none; cursor:pointer; display:inline-block; }
+  .mini:hover:not(:disabled) { background:var(--fg); color:#000; }
+  .mini:disabled { opacity:.6; cursor:default; background:transparent; }
 </style>
 </head>
 <body>
@@ -128,10 +132,10 @@
     <div class="count" id="r-count"></div>
     <div class="count" id="r-note"></div>
     <a id="r-link" class="btn" href="#" target="_blank" rel="noopener">Abrir en Spotify</a>
-    <details id="r-missing-box" class="hidden">
-      <summary id="r-missing-title"></summary>
-      <ul id="r-missing"></ul>
-    </details>
+    <div id="r-un-box" class="hidden">
+      <div class="lbl" id="r-un-title" style="margin-top:28px"></div>
+      <div id="r-un"></div>
+    </div>
     <iframe id="r-embed" title="Playlist de Spotify" height="352" loading="lazy"
             allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>
   </section>

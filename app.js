@@ -114,6 +114,84 @@ function randomString(len = 64) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 
+// ---------- coincidencia estricta ----------
+// Solo se añade una canción si título y artista coinciden de verdad con lo que dice NTS.
+const stripAccents = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+function norm(s) {
+  return stripAccents(s).toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ").trim()
+    .replace(/^the /, "");
+}
+
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  const m = a.length, n = b.length;
+  if (!m) return n;
+  if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+function sim(a, b) {
+  if (!a || !b) return 0;
+  return 1 - levenshtein(a, b) / Math.max(a.length, b.length);
+}
+
+// Título "de fondo": sin paréntesis, sin feat. y sin sufijos tipo " - Remastered 2011".
+const VERSION_RE = /\s+[-–—]\s+.*\b(?:remaster(?:ed)?|version|edit|mix|live|mono|stereo|single|bonus|deluxe|radio|original|\d{4})\b.*$/i;
+function coreTitle(s) {
+  return norm(clean(String(s)).replace(VERSION_RE, "")) || norm(s);
+}
+
+function containsWords(a, b) {
+  const [s, l] = a.length <= b.length ? [a, b] : [b, a];
+  return s.length >= 4 && (" " + l + " ").includes(" " + s + " ");
+}
+
+function artistScore(ntsArtist, spotifyArtists) {
+  const full = norm(ntsArtist);
+  const parts = String(ntsArtist)
+    .split(/\s*(?:,|&|\+|\/|\bx\b|\bfeat\.?|\bft\.?|\bfeaturing|\bwith\b|\band\b|\bvs\.?)\s*/i)
+    .map(norm).filter(Boolean);
+  const mine = [full, ...parts];
+  const theirs = spotifyArtists.map(norm).filter(Boolean);
+  if (theirs.length > 1) theirs.push(norm(spotifyArtists.join(" and ")));
+  let best = 0;
+  for (const x of mine) {
+    for (const y of theirs) {
+      let sc = sim(x, y);
+      if (containsWords(x, y)) sc = Math.max(sc, 0.9);
+      if (sc > best) best = sc;
+    }
+  }
+  return best;
+}
+
+function scoreCandidate(nts, item) {
+  const titleSim = sim(coreTitle(nts.title), coreTitle(item.name));
+  const artistSim = artistScore(nts.artist, (item.artists || []).map((a) => a.name));
+  return { titleSim, artistSim, total: titleSim * 0.6 + artistSim * 0.4 };
+}
+
+const isAccepted = (s) => s.titleSim >= 0.92 && s.artistSim >= 0.85;
+const isSimilar = (s) => s.titleSim >= 0.6 && s.artistSim >= 0.6;
+
+function mismatchReason(s) {
+  if (s.titleSim >= 0.92) return "el artista no coincide del todo, ¿mal escrito en NTS?";
+  if (s.artistSim >= 0.85) return "el título no coincide del todo";
+  return "ni el título ni el artista coinciden del todo";
+}
+
 // ---------- Spotify auth (PKCE) ----------
 async function login(clientId) {
   localStorage.setItem(LS.clientId, clientId);
@@ -406,26 +484,52 @@ async function findTrack(token, artist, title) {
   const a = clean(artist), t = clean(title);
   const firstArtist = a.split("&")[0].split(",")[0].trim();
   const queries = [`track:"${t}" artist:"${a}"`, `${a} ${t}`, `${firstArtist} ${t}`];
+  const nts = { artist, title };
+  const seen = new Set();
+  let best = null;
   for (const q of queries) {
-    const data = await sp("GET", "/search", token, { params: { q, type: "track", limit: 1 } });
-    const item = data.tracks?.items?.[0];
-    if (item) return item.uri;
+    const data = await sp("GET", "/search", token, { params: { q, type: "track", limit: 5 } });
+    for (const item of data.tracks?.items || []) {
+      if (seen.has(item.uri)) continue;
+      seen.add(item.uri);
+      const sc = scoreCandidate(nts, item);
+      if (!best || sc.total > best.sc.total) best = { sc, item };
+    }
+    if (best && isAccepted(best.sc)) break;
   }
-  return null;
+  if (best && isAccepted(best.sc)) return { status: "ok", uri: best.item.uri };
+  if (best && isSimilar(best.sc)) {
+    return {
+      status: "similar",
+      suggestion: {
+        uri: best.item.uri,
+        name: best.item.name,
+        artists: (best.item.artists || []).map((x) => x.name).join(", "),
+        url: best.item.external_urls?.spotify || "",
+        reason: mismatchReason(best.sc),
+      },
+    };
+  }
+  return { status: "none" };
 }
 
 // Paso 2: busca las canciones, crea la playlist y sube la portada elegida.
 async function createPlaylist(prep, token, st, onProgress) {
   const { ep, cleanUrl } = prep;
-  const uris = [], missing = [];
+  const uris = [], unmatched = [];
   for (let i = 0; i < ep.tracks.length; i++) {
     const t = ep.tracks[i];
     onProgress(`Buscando en Spotify… ${i + 1}/${ep.tracks.length}`);
-    const uri = await findTrack(token, t.artist, t.title);
-    if (!uri) missing.push(`${t.artist} – ${t.title}`);
-    else if (!uris.includes(uri)) uris.push(uri);
+    const r = await findTrack(token, t.artist, t.title);
+    if (r.status === "ok") {
+      if (!uris.includes(r.uri)) uris.push(r.uri);
+    } else {
+      unmatched.push({ artist: t.artist, title: t.title, suggestion: r.suggestion || null });
+    }
   }
-  if (!uris.length) throw new Error("No he encontrado ninguna canción en Spotify.");
+  if (!uris.length && !unmatched.some((u) => u.suggestion)) {
+    throw new Error("No he encontrado ninguna canción que coincida en Spotify.");
+  }
 
   onProgress("Creando la playlist…");
   const pl = await sp("POST", "/me/playlists", token, {
@@ -446,7 +550,7 @@ async function createPlaylist(prep, token, st, onProgress) {
   }
   return {
     id: pl.id, name: pl.name, url: pl.external_urls.spotify,
-    total: ep.tracks.length, matched: uris.length, missing, cover,
+    total: ep.tracks.length, matched: uris.length, unmatched, cover,
   };
 }
 
@@ -562,6 +666,78 @@ async function initUI() {
     e.target.value = "";
   });
 
+  // ----- canciones que no se han añadido -----
+  const reloadEmbed = () => {
+    const f = $("r-embed");
+    const src = f.src;
+    f.removeAttribute("src");
+    setTimeout(() => { f.src = src; }, 100);
+  };
+
+  function extLink(label, href) {
+    const a = document.createElement("a");
+    a.className = "mini";
+    a.textContent = label;
+    a.href = href;
+    a.target = "_blank";
+    a.rel = "noopener";
+    return a;
+  }
+
+  function renderUnmatched(list, playlistId) {
+    $("r-un").replaceChildren();
+    $("r-un-box").classList.toggle("hidden", !list.length);
+    $("r-un-title").textContent = `${list.length} sin añadir (no coinciden tal cual con lo que dice NTS)`;
+    for (const u of list) {
+      const card = document.createElement("div");
+      card.className = "un";
+      const h = document.createElement("div");
+      h.className = "un-title";
+      h.textContent = `${u.artist} – ${u.title}`;
+      const p = document.createElement("div");
+      p.className = "hint";
+      const actions = document.createElement("div");
+      actions.className = "un-actions";
+
+      if (u.suggestion) {
+        const s = u.suggestion;
+        p.textContent = `Lo más parecido en Spotify: ${s.artists} – ${s.name} (${s.reason}).`;
+        const add = document.createElement("button");
+        add.type = "button";
+        add.className = "mini";
+        add.textContent = "Añadir esa";
+        add.onclick = async () => {
+          add.disabled = true;
+          add.textContent = "Añadiendo…";
+          try {
+            const tk = await getToken();
+            if (!tk) { location.reload(); return; }
+            await sp("POST", `/playlists/${playlistId}/items`, tk, { json: { uris: [s.uri] } });
+            add.textContent = "Añadida ✓";
+            reloadEmbed();
+          } catch (err) {
+            add.disabled = false;
+            add.textContent = "Añadir esa";
+            setStatus(err.message, true);
+          }
+        };
+        actions.append(add);
+        if (s.url) actions.append(extLink("Ver en Spotify", s.url));
+      } else {
+        p.textContent = "No he encontrado nada parecido en Spotify.";
+      }
+
+      const q = encodeURIComponent(`${u.artist} ${u.title}`);
+      actions.append(
+        extLink("YouTube", `https://www.youtube.com/results?search_query=${q}`),
+        extLink("Bandcamp", `https://bandcamp.com/search?q=${q}`),
+        extLink("Google", `https://www.google.com/search?q=${q}`),
+      );
+      card.append(h, p, actions);
+      $("r-un").append(card);
+    }
+  }
+
   // ----- paso 1: cargar episodio -----
   $("form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -596,7 +772,8 @@ async function initUI() {
       setStatus("");
       $("editor").classList.add("hidden");
       $("r-name").textContent = data.name;
-      $("r-count").textContent = `${data.matched} de ${data.total} canciones encontradas en Spotify`;
+      $("r-count").textContent = `${data.matched} de ${data.total} canciones añadidas`
+        + (data.unmatched.length ? ` · ${data.unmatched.length} sin añadir` : "");
       $("r-note").textContent = data.cover.skipped
         ? "Playlist creada sin portada."
         : data.cover.ok
@@ -604,18 +781,7 @@ async function initUI() {
           : `Portada no subida: ${data.cover.reason}. La playlist está creada igualmente.`;
       $("r-link").href = data.url;
       $("r-embed").src = `https://open.spotify.com/embed/playlist/${data.id}?utm_source=generator`;
-      const box = $("r-missing-box");
-      if (data.missing.length) {
-        $("r-missing-title").textContent = `${data.missing.length} sin encontrar`;
-        $("r-missing").replaceChildren(...data.missing.map((m) => {
-          const li = document.createElement("li");
-          li.textContent = m;
-          return li;
-        }));
-        box.classList.remove("hidden");
-      } else {
-        box.classList.add("hidden");
-      }
+      renderUnmatched(data.unmatched, data.id);
       $("result").classList.remove("hidden");
     } catch (err) {
       let msg = err.message;
@@ -631,5 +797,5 @@ async function initUI() {
 
 if (typeof document !== "undefined") initUI();
 if (typeof module !== "undefined") {
-  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage, ogImage, clampCrop };
+  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage, ogImage, clampCrop, norm, coreTitle, artistScore, scoreCandidate, isAccepted, isSimilar, mismatchReason };
 }

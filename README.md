@@ -24,6 +24,10 @@ El Client ID no es un secreto (el flujo PKCE no usa Client Secret). Pégalo entr
 - **Descripción:** la del episodio (recortada a 300 caracteres) más el enlace de NTS.
 - **Portada:** descarga la imagen completa de NTS (la grande de fondo) y te deja elegir cómo quieres que quede: **entera con fondo difuminado**, **recortada a 1:1 eligiendo tú el encuadre** (arrastras la imagen y ajustas el zoom) o **sin portada**. También puedes usar otra imagen tuya. Se sube como JPEG de 640×640. Necesita el permiso `ugc-image-upload`; si ya habías conectado antes, te pedirá reconectar una vez.
 
+## Coincidencias estrictas
+
+Una canción solo se añade si el título y el artista coinciden de verdad con lo que dice NTS (ignorando mayúsculas, acentos, paréntesis y sufijos tipo "Remastered"). Las que no coinciden no se añaden: te aparecen debajo con lo más parecido que ha encontrado Spotify (por si en NTS está mal escrito), un botón para añadirla tú si quieres, y enlaces para buscarla en YouTube, Bandcamp o Google.
+
 ## Notas
 
 - Desde febrero de 2026, las apps de Spotify en modo desarrollo exigen que el dueño de la app tenga **Premium** y limitan los usuarios (5 en apps nuevas). Para uso personal basta.
