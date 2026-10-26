@@ -53,7 +53,7 @@
   <p class="sub">Pega el enlace de un episodio de NTS y te creo una playlist privada en Spotify con su tracklist.</p>
 
   <section id="setup" class="hidden">
-    <ol>
+    <ol id="setup-steps">
       <li>Crea una app en <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">el dashboard de Spotify</a>.</li>
       <li>En <strong>Redirect URIs</strong> añade exactamente esta dirección:
         <div class="uri"><code id="redirect-uri"></code><button type="button" id="copy-uri">Copiar</button></div>
@@ -61,8 +61,10 @@
       <li>Pega aquí su <strong>Client ID</strong> (solo se guarda en tu navegador):</li>
     </ol>
     <form id="setup-form">
-      <label for="client-id">Client ID</label>
-      <input id="client-id" type="text" required autocomplete="off" spellcheck="false" placeholder="32 caracteres">
+      <div id="client-id-field">
+        <label for="client-id">Client ID</label>
+        <input id="client-id" type="text" required autocomplete="off" spellcheck="false" placeholder="32 caracteres">
+      </div>
       <button type="submit">Conectar Spotify</button>
     </form>
   </section>
@@ -78,6 +80,7 @@
   <section id="result" class="hidden">
     <h2 id="r-name"></h2>
     <div class="count" id="r-count"></div>
+    <div class="count" id="r-note"></div>
     <a id="r-link" class="btn" href="#" target="_blank" rel="noopener">Abrir en Spotify</a>
     <details id="r-missing-box" class="hidden">
       <summary id="r-missing-title"></summary>

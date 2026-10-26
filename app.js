@@ -1,11 +1,17 @@
 // NTS → Spotify · 100% cliente (GitHub Pages). Login con Spotify PKCE: sin secretos ni servidor.
 
-const SCOPE = "playlist-modify-private playlist-modify-public";
+// Pega aquí tu Client ID de Spotify para no tener que introducirlo en cada dispositivo.
+// No es un secreto (el flujo PKCE no usa Client Secret), así que puede ir en el repo público.
+const CLIENT_ID = "";
+
+const SCOPE = "playlist-modify-private playlist-modify-public ugc-image-upload";
 const LS = {
   clientId: "nts2sp_client_id",
   token: "nts2sp_token",
   verifier: "nts2sp_verifier",
 };
+
+const getClientId = () => CLIENT_ID || localStorage.getItem(LS.clientId) || "";
 
 // ---------- utilidades puras ----------
 function parseNtsUrl(url) {
@@ -28,6 +34,52 @@ function extractTracks(results) {
   return (results || [])
     .map((t) => ({ artist: (t.artist || "").trim(), title: (t.title || "").trim() }))
     .filter((t) => t.artist && t.title);
+}
+
+function stripHtml(s) {
+  return String(s || "")
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatDate(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return "";
+  return d.toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+    .replace(/\./g, "");
+}
+
+function buildTitle(name, iso) {
+  const date = formatDate(iso);
+  const suffix = date ? ` · ${date}` : "";
+  return `NTS: ${name}`.slice(0, 100 - suffix.length).trimEnd() + suffix;
+}
+
+function buildDescription(desc, url) {
+  const max = 300;
+  const link = url.length <= 120 ? ` — ${url}` : "";
+  let d = stripHtml(desc);
+  if (d.length > max - link.length) d = d.slice(0, max - link.length - 1).trimEnd() + "…";
+  if (!d) return url.length <= 120 ? `Importada desde ${url}` : "";
+  return d + link;
+}
+
+const IMG_KEYS = [
+  "picture_large", "background_large", "picture_medium_large",
+  "background_medium_large", "picture_medium", "background_medium",
+];
+function pickImage(data) {
+  const m = data?.media || {};
+  for (const k of IMG_KEYS) if (m[k]) return m[k];
+  return null;
 }
 
 function redirectUri() {
@@ -77,6 +129,7 @@ async function tokenRequest(params) {
     access_token: data.access_token,
     refresh_token: data.refresh_token || old.refresh_token,
     expires_at: Date.now() + (data.expires_in - 30) * 1000,
+    scope: SCOPE,
   };
   localStorage.setItem(LS.token, JSON.stringify(tok));
   return tok;
@@ -89,7 +142,7 @@ async function handleRedirect() {
   if (p.has("error")) return "Spotify ha cancelado el acceso: " + p.get("error");
   try {
     await tokenRequest({
-      client_id: localStorage.getItem(LS.clientId),
+      client_id: getClientId(),
       grant_type: "authorization_code",
       code: p.get("code"),
       redirect_uri: redirectUri(),
@@ -101,15 +154,22 @@ async function handleRedirect() {
   return null;
 }
 
+// true si hay sesión guardada pero con permisos antiguos (hay que volver a conectar)
+function needsReauth() {
+  const raw = localStorage.getItem(LS.token);
+  return !!raw && JSON.parse(raw).scope !== SCOPE;
+}
+
 async function getToken() {
   const raw = localStorage.getItem(LS.token);
   if (!raw) return null;
   let tok = JSON.parse(raw);
+  if (tok.scope !== SCOPE) return null;
   if (Date.now() > tok.expires_at) {
     if (!tok.refresh_token) return null;
     try {
       tok = await tokenRequest({
-        client_id: localStorage.getItem(LS.clientId),
+        client_id: getClientId(),
         grant_type: "refresh_token",
         refresh_token: tok.refresh_token,
       });
@@ -123,14 +183,15 @@ async function getToken() {
 
 // ---------- NTS ----------
 // Intenta directo y, si el navegador lo bloquea por CORS, vía proxies públicos.
+const PROXIES = [
+  (u) => u,
+  (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
+  (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
+];
+
 async function fetchJSON(url) {
-  const attempts = [
-    (u) => u,
-    (u) => "https://corsproxy.io/?url=" + encodeURIComponent(u),
-    (u) => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u),
-  ];
   let notFound = false;
-  for (const wrap of attempts) {
+  for (const wrap of PROXIES) {
     try {
       const res = await fetch(wrap(url));
       if (res.status === 404) { notFound = true; continue; }
@@ -142,6 +203,18 @@ async function fetchJSON(url) {
   throw new Error("No he podido leer NTS desde el navegador. Prueba otra vez en un rato.");
 }
 
+async function fetchBlob(url) {
+  for (const wrap of PROXIES) {
+    try {
+      const res = await fetch(wrap(url));
+      if (!res.ok) continue;
+      const blob = await res.blob();
+      if (blob.size > 0 && (!blob.type || blob.type.startsWith("image/"))) return blob;
+    } catch { /* siguiente intento */ }
+  }
+  return null;
+}
+
 async function fetchNtsEpisode(show, episode) {
   const base = `https://www.nts.live/api/v2/shows/${show}/episodes/${episode}`;
   const data = await fetchJSON(base);
@@ -151,22 +224,65 @@ async function fetchNtsEpisode(show, episode) {
   }
   const tracks = extractTracks(results);
   if (!tracks.length) throw new Error("Este episodio no tiene tracklist publicado en NTS.");
-  return { name: data.name || episode, tracks };
+  return {
+    name: data.name || episode,
+    description: data.description || "",
+    broadcast: data.broadcast || "",
+    image: pickImage(data),
+    tracks,
+  };
+}
+
+// ---------- Portada ----------
+// Spotify exige JPEG en base64 de como mucho 256 KB.
+async function coverToJpegBase64(blob) {
+  const bmp = await createImageBitmap(blob);
+  const side = Math.min(bmp.width, bmp.height);
+  const size = Math.min(side, 640);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  canvas.getContext("2d").drawImage(
+    bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, size, size,
+  );
+  for (const q of [0.9, 0.8, 0.7, 0.55, 0.4, 0.3]) {
+    const out = await new Promise((r) => canvas.toBlob(r, "image/jpeg", q));
+    if (out && out.size <= 180 * 1024) {
+      const dataUrl = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.onerror = rej;
+        fr.readAsDataURL(out);
+      });
+      return dataUrl.split(",")[1];
+    }
+  }
+  return null;
+}
+
+async function uploadCover(token, playlistId, imageUrl) {
+  try {
+    const blob = await fetchBlob(imageUrl);
+    if (!blob) return false;
+    const b64 = await coverToJpegBase64(blob);
+    if (!b64) return false;
+    await sp("PUT", `/playlists/${playlistId}/images`, token, { body: b64, contentType: "image/jpeg" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- Spotify API ----------
-async function sp(method, path, token, { params, json } = {}) {
+async function sp(method, path, token, { params, json, body, contentType } = {}) {
   const url = new URL("https://api.spotify.com/v1" + path);
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  const headers = { Authorization: "Bearer " + token };
+  let payload;
+  if (body !== undefined) { payload = body; headers["Content-Type"] = contentType; }
+  else if (json) { payload = JSON.stringify(json); headers["Content-Type"] = "application/json"; }
+
   for (let i = 0; i < 4; i++) {
-    const res = await fetch(url, {
-      method,
-      headers: {
-        Authorization: "Bearer " + token,
-        ...(json ? { "Content-Type": "application/json" } : {}),
-      },
-      body: json ? JSON.stringify(json) : undefined,
-    });
+    const res = await fetch(url, { method, headers, body: payload });
     if (res.status === 429) {
       await sleep((Math.min(Number(res.headers.get("Retry-After") || 2), 10) + 1) * 1000);
       continue;
@@ -178,7 +294,8 @@ async function sp(method, path, token, { params, json } = {}) {
       err.status = res.status;
       throw err;
     }
-    return res.status === 204 ? {} : res.json();
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
   }
   throw new Error("Spotify está limitando las peticiones. Prueba en un minuto.");
 }
@@ -197,7 +314,8 @@ async function findTrack(token, artist, title) {
 
 async function convert(url, token, onProgress) {
   const { show, episode } = parseNtsUrl(url);
-  onProgress("Leyendo el tracklist de NTS…");
+  const cleanUrl = `https://www.nts.live/shows/${show}/episodes/${episode}`;
+  onProgress("Leyendo el episodio de NTS…");
   const ep = await fetchNtsEpisode(show, episode);
 
   const uris = [], missing = [];
@@ -212,12 +330,25 @@ async function convert(url, token, onProgress) {
 
   onProgress("Creando la playlist…");
   const pl = await sp("POST", "/me/playlists", token, {
-    json: { name: `NTS: ${ep.name}`.slice(0, 100), description: `Importada desde ${url}`, public: false },
+    json: {
+      name: buildTitle(ep.name, ep.broadcast),
+      description: buildDescription(ep.description, cleanUrl),
+      public: false,
+    },
   });
   for (let i = 0; i < uris.length; i += 100) {
     await sp("POST", `/playlists/${pl.id}/items`, token, { json: { uris: uris.slice(i, i + 100) } });
   }
-  return { name: pl.name, url: pl.external_urls.spotify, total: ep.tracks.length, matched: uris.length, missing };
+
+  let cover = null; // null = el episodio no tiene imagen
+  if (ep.image) {
+    onProgress("Subiendo la portada…");
+    cover = await uploadCover(token, pl.id, ep.image);
+  }
+  return {
+    name: pl.name, url: pl.external_urls.spotify,
+    total: ep.tracks.length, matched: uris.length, missing, cover,
+  };
 }
 
 // ---------- UI ----------
@@ -229,7 +360,12 @@ async function initUI() {
   };
 
   $("redirect-uri").textContent = redirectUri();
-  $("client-id").value = localStorage.getItem(LS.clientId) || "";
+  $("client-id").value = getClientId();
+  if (CLIENT_ID) {
+    $("setup-steps").classList.add("hidden");
+    $("client-id-field").classList.add("hidden");
+    $("client-id").required = false;
+  }
 
   const redirectError = await handleRedirect();
   const token = await getToken();
@@ -249,6 +385,9 @@ async function initUI() {
     $("auth").append("Spotify conectado · ", out);
   }
   if (redirectError) setStatus(redirectError, true);
+  else if (!token && needsReauth()) {
+    setStatus("Hay un permiso nuevo (subir la portada). Vuelve a conectar Spotify, solo hace falta una vez.");
+  }
 
   $("copy-uri").onclick = async () => {
     try { await navigator.clipboard.writeText(redirectUri()); $("copy-uri").textContent = "Copiado"; } catch { /* sin permiso */ }
@@ -256,7 +395,7 @@ async function initUI() {
 
   $("setup-form").addEventListener("submit", (e) => {
     e.preventDefault();
-    const id = $("client-id").value.trim();
+    const id = getClientId() || $("client-id").value.trim();
     if (id) login(id);
   });
 
@@ -272,6 +411,10 @@ async function initUI() {
       setStatus("");
       $("r-name").textContent = data.name;
       $("r-count").textContent = `${data.matched} de ${data.total} canciones encontradas en Spotify`;
+      $("r-note").textContent =
+        data.cover === false ? "No he podido subir la portada (la playlist está creada igualmente)."
+        : data.cover === null ? "Este episodio no tiene imagen en NTS."
+        : "";
       $("r-link").href = data.url;
       const box = $("r-missing-box");
       if (data.missing.length) {
@@ -299,4 +442,6 @@ async function initUI() {
 }
 
 if (typeof document !== "undefined") initUI();
-if (typeof module !== "undefined") module.exports = { parseNtsUrl, clean, extractTracks, b64url };
+if (typeof module !== "undefined") {
+  module.exports = { parseNtsUrl, clean, extractTracks, b64url, stripHtml, formatDate, buildTitle, buildDescription, pickImage };
+}
