@@ -14,6 +14,16 @@ Webapp estática: pegas el enlace de un episodio de NTS y crea una playlist priv
 2. Abre tu web publicada: te muestra la **Redirect URI** exacta. Cópiala en *Settings → Redirect URIs* de la app de Spotify y guarda.
 3. Pega el **Client ID** en la web y pulsa *Conectar Spotify*. Se guarda solo en tu navegador.
 
+## Sin pegar el Client ID en cada dispositivo
+
+El Client ID no es un secreto (el flujo PKCE no usa Client Secret). Pégalo entre las comillas de `const CLIENT_ID = "";` al principio de `app.js` y vuelve a subir el archivo. Desde entonces, en cualquier móvil u ordenador solo tienes que pulsar *Conectar Spotify* la primera vez; la sesión se mantiene sola en ese navegador.
+
+## Qué copia a Spotify
+
+- **Título:** `NTS: nombre del episodio · fecha de emisión`.
+- **Descripción:** la del episodio (recortada a 300 caracteres) más el enlace de NTS.
+- **Portada:** la imagen del episodio, recortada a cuadrado y comprimida como JPEG. Necesita el permiso `ugc-image-upload`; si ya habías conectado antes, te pedirá reconectar una vez.
+
 ## Notas
 
 - Desde febrero de 2026, las apps de Spotify en modo desarrollo exigen que el dueño de la app tenga **Premium** y limitan los usuarios (5 en apps nuevas). Para uso personal basta.
