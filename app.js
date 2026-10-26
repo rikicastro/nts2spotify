@@ -59,7 +59,9 @@ function formatDate(iso) {
 
 function buildTitle(name, iso) {
   const date = formatDate(iso);
-  const suffix = date ? ` · ${date}` : "";
+  // Si el nombre ya trae la fecha (p. ej. "… 8th October 2026"), no la repetimos.
+  const alreadyDated = date && String(name).includes(String(new Date(iso).getUTCFullYear()));
+  const suffix = date && !alreadyDated ? ` · ${date}` : "";
   return `NTS: ${name}`.slice(0, 100 - suffix.length).trimEnd() + suffix;
 }
 
@@ -237,13 +239,27 @@ async function fetchNtsEpisode(show, episode) {
 // Spotify exige JPEG en base64 de como mucho 256 KB.
 async function coverToJpegBase64(blob) {
   const bmp = await createImageBitmap(blob);
-  const side = Math.min(bmp.width, bmp.height);
-  const size = Math.min(side, 640);
+  const size = 640;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = size;
-  canvas.getContext("2d").drawImage(
-    bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, size, size,
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingQuality = "high";
+
+  // Fondo: la misma imagen difuminada (reducir y ampliar funciona en todos los navegadores, también iOS).
+  const side = Math.min(bmp.width, bmp.height);
+  const tiny = document.createElement("canvas");
+  tiny.width = tiny.height = 24;
+  tiny.getContext("2d").drawImage(
+    bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, 24, 24,
   );
+  ctx.drawImage(tiny, 0, 0, size, size);
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.fillRect(0, 0, size, size);
+
+  // Imagen completa, sin recortar nada, centrada sobre el fondo.
+  const scale = Math.min(size / bmp.width, size / bmp.height);
+  const w = bmp.width * scale, h = bmp.height * scale;
+  ctx.drawImage(bmp, (size - w) / 2, (size - h) / 2, w, h);
   for (const q of [0.9, 0.8, 0.7, 0.55, 0.4, 0.3]) {
     const out = await new Promise((r) => canvas.toBlob(r, "image/jpeg", q));
     if (out && out.size <= 180 * 1024) {
